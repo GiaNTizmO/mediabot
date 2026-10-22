@@ -106,6 +106,14 @@ POT_PROVIDER_URL=http://pot-provider:4416
 
 Подробная причина любой ошибки пишется в лог: `docker compose logs bot`.
 
+### 5. Подробная диагностика
+```bash
+docker compose exec bot python -m bot.diagnose "https://youtu.be/VIDEO_ID"
+```
+Проверяет cookies и токен-сервер, затем запускает yt-dlp в подробном режиме с настройками бота.
+Важные строки: `Found YouTube account cookies` (yt-dlp принял вход) и `PO Token Providers: bgutil:http…`.
+Значения cookie в вывод не попадают.
+
 ## Тесты
 ```bash
 pip install -r requirements-dev.txt

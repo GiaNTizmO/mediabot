@@ -279,8 +279,21 @@ def configure_ytdlp(pot_provider_url: str | None = None) -> None:
         _EXTRACTOR_ARGS["youtubepot-bgutilhttp"] = {"base_url": [pot_provider_url.rstrip("/")]}
 
 
+class _YtdlpLogger:
+    """Предупреждения yt-dlp (например, «cookies are no longer valid») — в лог бота; ошибки логирует _clean."""
+
+    def debug(self, msg: str) -> None:
+        pass
+
+    info = debug
+    error = debug
+
+    def warning(self, msg: str) -> None:
+        log.warning("yt-dlp: %s", re.sub(r"\x1b\[[0-9;]*m", "", msg).removeprefix("WARNING: "))
+
+
 def _base_opts(cookies: str | None) -> dict:
-    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30}
+    opts = {"quiet": True, "logger": _YtdlpLogger(), "noplaylist": True, "socket_timeout": 30}
     if cookies:
         opts["cookiefile"] = cookies
     if _EXTRACTOR_ARGS:

@@ -20,7 +20,7 @@ def _write(tmp_path, body, name="cookies.txt"):
 
 
 def test_logged_in_youtube_and_instagram(tmp_path):
-    p = _write(tmp_path, HEADER + _line(".youtube.com", "PREF") + _line(".youtube.com", "__Secure-3PSID", httponly=True)
+    p = _write(tmp_path, HEADER + _line(".youtube.com", "PREF") + _line(".youtube.com", "__Secure-3PAPISID", httponly=True)
                + _line(".youtube.com", "LOGIN_INFO") + _line(".instagram.com", "sessionid"))
     r = inspect_cookies(p)
     assert r.ok
@@ -34,8 +34,19 @@ def test_guest_youtube_cookies(tmp_path):
     assert not r.ok and "не были залогинены" in r.lines[0]
 
 
+def test_youtube_needs_login_info_and_apisid(tmp_path):
+    # так выглядит «почти вход»: SID есть, но yt-dlp не считает это авторизацией
+    p = _write(tmp_path, HEADER + _line(".youtube.com", "SID") + _line(".youtube.com", "__Secure-3PSID")
+               + _line(".youtube.com", "SAPISID"))
+    r = inspect_cookies(p)
+    assert not r.ok and "LOGIN_INFO" in r.lines[0] and "SAPISID" not in r.lines[0]
+    p = _write(tmp_path, HEADER + _line(".youtube.com", "LOGIN_INFO") + _line(".youtube.com", "SID"), "b.txt")
+    r = inspect_cookies(p)
+    assert not r.ok and "SAPISID или __Secure-1PAPISID или __Secure-3PAPISID" in r.lines[0]
+
+
 def test_expired_login(tmp_path):
-    p = _write(tmp_path, HEADER + _line(".youtube.com", "SID", PAST))
+    p = _write(tmp_path, HEADER + _line(".youtube.com", "LOGIN_INFO") + _line(".youtube.com", "SAPISID", PAST))
     r = inspect_cookies(p)
     assert not r.ok and "истекли" in r.lines[0]
 
@@ -47,7 +58,8 @@ def test_json_export_rejected(tmp_path):
 
 def test_windows_line_endings(tmp_path):
     p = tmp_path / "c.txt"
-    p.write_bytes((HEADER + _line(".youtube.com", "SID")).replace("\n", "\r\n").encode())
+    body = HEADER + _line(".youtube.com", "LOGIN_INFO") + _line(".youtube.com", "SAPISID")
+    p.write_bytes(body.replace("\n", "\r\n").encode())
     assert inspect_cookies(p).ok
 
 

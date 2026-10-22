@@ -5,11 +5,13 @@ from pathlib import Path
 
 from yt_dlp.cookies import YoutubeDLCookieJar
 
-# cookie, без которых сайт считает вас гостем
+# Набор cookie, без которых сайт считает вас гостем: нужны все группы, из каждой — хотя бы одна.
+# Для YouTube повторяет логику yt-dlp (_has_auth_cookies): LOGIN_INFO + один из *APISID,
+# из которого строится заголовок авторизации.
 AUTH_COOKIES = {
-    "YouTube": ("youtube.com", {"SID", "__Secure-1PSID", "__Secure-3PSID", "LOGIN_INFO"}),
-    "Instagram": ("instagram.com", {"sessionid"}),
-    "TikTok": ("tiktok.com", {"sessionid", "sessionid_ss"}),
+    "YouTube": ("youtube.com", [{"LOGIN_INFO"}, {"SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"}]),
+    "Instagram": ("instagram.com", [{"sessionid"}]),
+    "TikTok": ("tiktok.com", [{"sessionid", "sessionid_ss"}]),
 }
 
 
@@ -43,23 +45,28 @@ def inspect_cookies(path: str | Path, now: float | None = None) -> CookieReport:
         return CookieReport(False, ["в файле нет ни одной cookie"])
 
     report = CookieReport(True)
-    for site, (domain, names) in AUTH_COOKIES.items():
+    for site, (domain, groups) in AUTH_COOKIES.items():
         site_cookies = [c for c in cookies if c.domain.lstrip(".").endswith(domain)]
         if not site_cookies:
             continue
-        auth = [c for c in site_cookies if c.name in names]
-        live = [c for c in auth if not c.expires or c.expires > now]
-        if not auth:
+        names = {c.name for c in site_cookies}
+        live_names = {c.name for c in site_cookies if not c.expires or c.expires > now}
+        auth = [c for c in site_cookies if any(c.name in g for g in groups)]
+        missing = [g for g in groups if not g & names]
+        expired = [g for g in groups if g & names and not g & live_names]
+        if missing:
             report.ok = False
+            need = "; ".join(" или ".join(sorted(g)) for g in missing)
             report.lines.append(
-                f"{site}: {len(site_cookies)} cookie, но нет cookie входа ({', '.join(sorted(names))}) — "
-                "вы не были залогинены при экспорте"
+                f"{site}: {len(site_cookies)} cookie, но не хватает cookie входа: {need}. "
+                "Вы не были залогинены при экспорте, сессия уже сброшена, "
+                "или расширение экспортировало не все cookie"
             )
-        elif not live:
+        elif expired:
             report.ok = False
             report.lines.append(f"{site}: cookie входа истекли — экспортируйте заново")
         else:
-            expires = [c.expires for c in live if c.expires]
+            expires = [c.expires for c in auth if c.expires and c.expires > now]
             left = f", истекают через {_fmt_days(min(expires) - now)}" if expires else ""
             report.lines.append(f"{site}: вход найден ({len(site_cookies)} cookie{left})")
     if not report.lines:
