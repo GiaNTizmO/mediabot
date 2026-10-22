@@ -45,6 +45,7 @@ router = Router()
 PENDING_LIMIT = 500
 PROGRESS_INTERVAL = 3  # сек между обновлениями сообщения с прогрессом
 UPLOAD_TIMEOUT = 900
+LOCAL_UPLOAD_TIMEOUT = 3600  # локальный Bot API отвечает, только когда сам дольёт до 2 ГБ в Telegram
 
 HELP = (
     "Пришлите ссылку на видео с <b>YouTube</b>, <b>YouTube Shorts</b>, <b>TikTok</b> или "
@@ -354,7 +355,9 @@ async def on_choice(cb: CallbackQuery, cfg: Config, store: BotState, cache: File
 
         await edit(msg, f"📤 Отправляю в Telegram: {title}")
         try:
-            sent_kind, file_id = await _upload(bot, item.chat_id, result, option, info, reply, lang)
+            sent_kind, file_id = await _upload(
+            bot, item.chat_id, result, option, info, reply, lang, local=bool(cfg.local_api_url)
+        )
         finally:
             # файл больше не нужен — удаляем сразу, не дожидаясь остальных действий
             result.cleanup()
@@ -402,7 +405,13 @@ async def _send_cached(
 async def _upload(
     bot: Bot, chat_id: int, result: DownloadResult, option: Option, info: VideoInfo, reply,
     lang: str | None = None,
+    local: bool = False,
 ) -> tuple[str, str]:
+    # локальный Bot API читает файл прямо с общего диска по file:// — без второй копии и
+    # без перекачки по HTTP; облачному API файл загружаем как обычно
+    def media(p: Path):
+        return p.as_uri() if local else FSInputFile(p)
+
     path = result.path
     thumb_path = Path(result.tmp.name) / "thumb_tg.jpg"
     common = dict(
@@ -410,14 +419,14 @@ async def _upload(
         caption=caption(info, lang),
         parse_mode="HTML",
         reply_parameters=reply,
-        request_timeout=UPLOAD_TIMEOUT,
+        request_timeout=LOCAL_UPLOAD_TIMEOUT if local else UPLOAD_TIMEOUT,
     )
 
     if option.audio_only:
         thumb = await make_thumbnail(result.thumbnail, thumb_path, seek=0) if result.thumbnail else None
         async with ChatActionSender.upload_voice(bot=bot, chat_id=chat_id):
             sent = await bot.send_audio(
-                audio=FSInputFile(path),
+                audio=media(path),
                 title=short(info.audio_title, 64),
                 performer=info.audio_artist,
                 duration=info.duration,
@@ -431,7 +440,7 @@ async def _upload(
     async with ChatActionSender.upload_video(bot=bot, chat_id=chat_id):
         try:
             sent = await bot.send_video(
-                video=FSInputFile(path),
+                video=media(path),
                 duration=meta.duration or info.duration,
                 width=meta.width,
                 height=meta.height,
@@ -442,5 +451,5 @@ async def _upload(
             return "video", sent.video.file_id
         except TelegramBadRequest as e:
             log.warning("send_video failed (%s), falling back to document", e)
-            sent = await bot.send_document(document=FSInputFile(path), **common)
+            sent = await bot.send_document(document=media(path), **common)
             return "document", sent.document.file_id

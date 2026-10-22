@@ -29,8 +29,7 @@ Telegram-бот для скачивания видео и музыки с **YouT
 cp .env.example .env      # впишите BOT_TOKEN от @BotFather
 docker compose up -d --build
 ```
-Файлы до 2 ГБ: заполните `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`, `LOCAL_API_URL=http://telegram-bot-api:8081`,
-`MAX_FILE_MB=2000` и запустите `docker compose --profile local-api up -d --build`.
+Файлы до 2 ГБ — см. раздел «Большие файлы (до 2 ГБ)» ниже.
 
 ## Запуск без Docker
 Нужны Python 3.10+, `ffmpeg` и [deno](https://deno.com) (для YouTube требуется yt-dlp).
@@ -45,7 +44,7 @@ python -m bot
 | Переменная | Описание |
 |---|---|
 | `BOT_TOKEN` | токен бота (обязательно) |
-| `MAX_FILE_MB` | лимит размера файла, по умолчанию 50 |
+| `MAX_FILE_MB` | лимит размера файла: до 50 (облачный API) или до 2000 (локальный Bot API) |
 | `LOCAL_API_URL` | адрес локального telegram-bot-api |
 | `ALLOWED_USERS` | user id через запятую; пусто означает доступ для всех |
 | `COOKIES_FILE` | cookies.txt для Instagram/YouTube с ограничениями |
@@ -56,6 +55,33 @@ python -m bot
 ## Советы
 - Instagram часто требует авторизацию: экспортируйте cookies.txt расширением «Get cookies.txt LOCALLY».
 - Сайты меняются, и yt-dlp периодически ломается. Обновление: `pip install -U "yt-dlp[default]"` или `docker compose build --pull`.
+
+## Большие файлы (до 2 ГБ)
+Облачный Bot API позволяет боту отправлять файлы только до **50 МБ**. Чтобы поднять лимит до **2000 МБ**,
+рядом с ботом запускается локальный Bot API сервер (уже описан в `docker-compose.yml`).
+
+1. Получите `api_id` и `api_hash`: войдите на https://my.telegram.org → **API development tools** →
+   создайте приложение (название и описание любые).
+2. Добавьте в `.env`:
+   ```
+   COMPOSE_PROFILES=pot,local-api     # pot — если включали PO-токены, иначе просто local-api
+   LOCAL_API_URL=http://telegram-bot-api:8081
+   MAX_FILE_MB=2000
+   TELEGRAM_API_ID=1234567
+   TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
+   ```
+3. `docker compose up -d --build`
+
+При первом запуске бот сам выйдет из облачного Bot API (`logOut`, так требует Telegram) — в логе будет
+«бот вышел из облачного Bot API». Готовый файл сервер берёт прямо с общего диска (`file://`), поэтому второй
+копии не появляется, а сам файл, как и раньше, удаляется сразу после отправки.
+
+**Место на диске:** во время загрузки нужно примерно 2,2× от размера файла (видео и звук + склейка),
+т.е. для файла 2 ГБ — около 4,5 ГБ свободного места. Если места не хватает, бот заранее предупредит.
+
+**Вернуться на облачный API:** уберите `LOCAL_API_URL` и `local-api` из `COMPOSE_PROFILES`, верните
+`MAX_FILE_MB=50`, удалите файл `data/cloud_logged_out` и подождите 10 минут после перехода на локальный сервер
+(ограничение Telegram).
 
 ## Авторизация (cookies.txt)
 Нужна, если бот отвечает «требует вход» или «подтвердить, что вы не бот»:

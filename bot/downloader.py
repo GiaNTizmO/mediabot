@@ -148,7 +148,7 @@ class DownloadResult:
 
 def temp_root(base: str | None = None) -> Path:
     """Папка, в которой бот держит временные файлы. Вся она принадлежит боту."""
-    root = Path(base or tempfile.gettempdir()) / "mediabot"
+    root = (Path(base or tempfile.gettempdir()) / "mediabot").resolve()  # абсолютный: нужен для file://
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -485,6 +485,9 @@ async def download(
     progress = progress or Progress()
     check_free_space(temp_dir, option.size)
     tmp = tempfile.TemporaryDirectory(prefix="job_", dir=temp_root(temp_dir))
+    # mkdtemp создаёт папку 0700; локальный Bot API (другой пользователь, uid 101) читает файл
+    # прямо с диска, поэтому открываем папку на чтение. cookies внутри остаются 0600.
+    os.chmod(tmp.name, 0o755)
     try:
         ck = _copy_cookies(cookies, Path(tmp.name))  # удалится вместе с папкой задачи
     except BaseException:

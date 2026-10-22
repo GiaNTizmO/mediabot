@@ -4,8 +4,12 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # общая папка для временных файлов: нужна, если включён локальный Bot API
+      # общая папка для временных файлов: локальный Bot API читает из неё готовый файл
       TMPDIR: /work
+    depends_on:
+      telegram-bot-api:
+        condition: service_started
+        required: false  # сервис запускается только с профилем local-api
     volumes:
       - ./data:/app/data
       - work:/work
@@ -20,20 +24,22 @@ services:
     init: true
     # порт наружу не публикуется: сервис доступен только боту внутри сети compose
 
-  # Необязательно: локальный Bot API сервер — снимает лимит 50 МБ (до 2 ГБ).
-  # Запуск: docker compose --profile local-api up -d
-  # В .env: LOCAL_API_URL=http://telegram-bot-api:8081, MAX_FILE_MB=2000,
-  #         TELEGRAM_API_ID / TELEGRAM_API_HASH с https://my.telegram.org
+  # Необязательно: локальный Bot API сервер — поднимает лимит файла с 50 МБ до 2000 МБ.
+  # Включение — в .env: COMPOSE_PROFILES=local-api (через запятую с pot, если он тоже нужен),
+  #   LOCAL_API_URL=http://telegram-bot-api:8081, MAX_FILE_MB=2000,
+  #   TELEGRAM_API_ID / TELEGRAM_API_HASH с https://my.telegram.org
   telegram-bot-api:
     image: aiogram/telegram-bot-api:latest
     profiles: [local-api]
     restart: unless-stopped
-    env_file: .env
     environment:
-      TELEGRAM_LOCAL: "1"
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "1"  # разрешает file:// и файлы до 2000 МБ
     volumes:
-      - work:/work
+      - work:/work  # тот же путь, что у бота: файл передаётся по file:///work/...
       - tg-api-data:/var/lib/telegram-bot-api
+    # порт наружу не публикуется: сервер доступен только боту внутри сети compose
 
 volumes:
   work:
