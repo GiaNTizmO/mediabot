@@ -268,10 +268,23 @@ def human_size(size: float | None) -> str:
     return "?"
 
 
+# дополнительные extractor_args для yt-dlp, задаются один раз при старте (см. configure_ytdlp)
+_EXTRACTOR_ARGS: dict[str, dict[str, list[str]]] = {}
+
+
+def configure_ytdlp(pot_provider_url: str | None = None) -> None:
+    """PO-токены через bgutil-ytdlp-pot-provider: помогают YouTube на серверных IP."""
+    _EXTRACTOR_ARGS.clear()
+    if pot_provider_url:
+        _EXTRACTOR_ARGS["youtubepot-bgutilhttp"] = {"base_url": [pot_provider_url.rstrip("/")]}
+
+
 def _base_opts(cookies: str | None) -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30}
     if cookies:
         opts["cookiefile"] = cookies
+    if _EXTRACTOR_ARGS:
+        opts["extractor_args"] = {k: dict(v) for k, v in _EXTRACTOR_ARGS.items()}
     return opts
 
 

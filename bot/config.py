@@ -14,6 +14,7 @@ class Config:
     max_concurrent: int = 3
     data_dir: str = "data"
     temp_dir: str | None = None
+    pot_provider_url: str | None = None
 
     @property
     def max_bytes(self) -> int:
@@ -40,4 +41,5 @@ def load_config() -> Config:
         max_concurrent=int(os.getenv("MAX_CONCURRENT", "3")),
         data_dir=os.getenv("DATA_DIR", "data"),
         temp_dir=os.getenv("TEMP_DIR") or None,
+        pot_provider_url=os.getenv("POT_PROVIDER_URL") or None,
     )

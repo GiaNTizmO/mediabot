@@ -86,12 +86,25 @@ Cookies дают полный доступ к аккаунту, поэтому �
 
 Бот работает с копией файла: оригинал не изменяется, и его можно смонтировать только для чтения.
 
-### 3. Если не помогло
-- «cookies, похоже, устарели» → экспортируйте заново (шаги выше).
-- YouTube продолжает требовать «я не бот» даже со свежими cookies → IP сервера помечен YouTube. Помогает
-  плагин [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) (PO-токены)
-  или прокси с «домашним» IP.
-- Подробная причина ошибки пишется в лог: `docker compose logs bot`.
+### 3. Проверка
+При старте бот пишет в лог, что нашёл в cookies (`docker compose logs bot | grep cookies`):
+```
+cookies: YouTube: вход найден (21 cookie, истекают через 395 дн.)
+```
+Проверить файл вручную: `docker compose exec bot python -m bot.cookies_check /app/cookies.txt`.
+Если там «нет cookie входа», значит, при экспорте вы не были залогинены, и файл нужно экспортировать заново.
+
+### 4. PO-токены для YouTube (если «я не бот» не уходит)
+На серверных IP YouTube строже. Плагин [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+уже установлен в бота, ему нужен только сервер-генератор токенов. Добавьте в `.env`:
+```
+COMPOSE_PROFILES=pot
+POT_PROVIDER_URL=http://pot-provider:4416
+```
+и выполните `docker compose up -d --build`. PO-токены работают **вместе** с cookies, а не вместо них.
+Если не помогло и это, остаётся прокси с «домашним» IP.
+
+Подробная причина любой ошибки пишется в лог: `docker compose logs bot`.
 
 ## Тесты
 ```bash

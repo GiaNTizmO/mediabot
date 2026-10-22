@@ -11,6 +11,15 @@ services:
       - work:/work
       # - ./cookies.txt:/app/cookies.txt:ro   # и COOKIES_FILE=/app/cookies.txt в .env
 
+  # Необязательно: PO-токены для YouTube (помогают на серверных IP вместе с cookies).
+  # Включение — в .env: COMPOSE_PROFILES=pot и POT_PROVIDER_URL=http://pot-provider:4416
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    profiles: [pot]
+    restart: unless-stopped
+    init: true
+    # порт наружу не публикуется: сервис доступен только боту внутри сети compose
+
   # Необязательно: локальный Bot API сервер — снимает лимит 50 МБ (до 2 ГБ).
   # Запуск: docker compose --profile local-api up -d
   # В .env: LOCAL_API_URL=http://telegram-bot-api:8081, MAX_FILE_MB=2000,

@@ -10,7 +10,8 @@ from aiogram.types import BotCommand, LinkPreviewOptions
 
 from .cache import FileCache
 from .config import Config, load_config
-from .downloader import sweep_temp
+from .cookies_check import inspect_cookies
+from .downloader import configure_ytdlp, sweep_temp
 from .handlers import BotState, router
 
 
@@ -29,8 +30,18 @@ async def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
     cfg = load_config()
+    log = logging.getLogger("mediabot")
+    configure_ytdlp(cfg.pot_provider_url)
+    if cfg.pot_provider_url:
+        log.info("PO token provider: %s", cfg.pot_provider_url)
+    if cfg.cookies_file:
+        report = inspect_cookies(cfg.cookies_file)
+        for line in report.lines:
+            (log.info if report.ok else log.warning)("cookies: %s", line)
+    else:
+        log.info("cookies: не заданы (COOKIES_FILE пуст)")
     if removed := sweep_temp(cfg.temp_dir):
-        logging.info("removed %d leftover temp item(s) from previous run", removed)
+        log.info("removed %d leftover temp item(s) from previous run", removed)
     cache = FileCache(Path(cfg.data_dir) / "cache.sqlite3")
     bot = build_bot(cfg)
 
