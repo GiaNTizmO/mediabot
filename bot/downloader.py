@@ -12,6 +12,7 @@ from pathlib import Path
 import yt_dlp
 from yt_dlp.utils import DownloadCancelled
 
+from .cookies_check import normalize_cookies_text
 from .media import AudioTags, make_cover, tag_audio
 
 URL_RE = re.compile(
@@ -311,9 +312,11 @@ def _copy_cookies(cookies: str | None, directory: Path) -> Path | None:
     src = Path(cookies)
     if not src.is_file():
         raise DownloadError(f"Файл cookies не найден: {cookies}. Проверьте COOKIES_FILE.")
+    # заодно чиним табуляцию/переводы строк, испорченные при копировании файла через буфер обмена
+    text = normalize_cookies_text(src.read_text(encoding="utf-8", errors="replace")).text
     fd, tmp = tempfile.mkstemp(prefix="cookies_", suffix=".txt", dir=directory)
-    os.close(fd)
-    shutil.copyfile(src, tmp)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
     return Path(tmp)
 
 

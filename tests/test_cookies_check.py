@@ -77,3 +77,37 @@ def test_pot_provider_extractor_args():
     finally:
         configure_ytdlp(None)
     assert "extractor_args" not in _base_opts(None)
+
+
+def test_login_line_with_spaces_instead_of_tabs(tmp_path):
+    # ровно случай с сервера: файл вставлен через буфер, в строке LOGIN_INFO табуляция стала пробелами
+    good = _line(".youtube.com", "SAPISID") + _line(".youtube.com", "PREF")
+    broken = f".youtube.com    TRUE    /       TRUE    {FUTURE}      LOGIN_INFO      AFmm:Qq==\n"
+    p = _write(tmp_path, HEADER + good + broken)
+    r = inspect_cookies(p)
+    assert r.ok, r.lines
+    assert r.lines[0].startswith("YouTube: вход найден (3 cookie")
+    assert "пробелами вместо табуляции: 1 (№ 4)" in r.lines[1]
+
+
+def test_bom_crlf_and_unfixable_line(tmp_path):
+    body = HEADER + _line(".youtube.com", "LOGIN_INFO") + _line(".youtube.com", "SAPISID") + ".youtube.com TRUE /\n"
+    p = tmp_path / "c.txt"
+    p.write_bytes(("﻿" + body).replace("\n", "\r\n").encode())
+    r = inspect_cookies(p)
+    assert r.ok
+    assert r.lines[-1] == "строка 4 пропущена: 3 полей вместо 7"
+
+
+def test_bot_copy_is_normalized(tmp_path):
+    from yt_dlp.cookies import YoutubeDLCookieJar
+
+    from bot.downloader import _copy_cookies
+
+    src = _write(tmp_path, HEADER + f".youtube.com  TRUE  /  TRUE  {FUTURE}  LOGIN_INFO  v1\n"
+                 + f"#HttpOnly_.youtube.com TRUE / TRUE {FUTURE} SAPISID v2\n")
+    copy = _copy_cookies(str(src), tmp_path)
+    jar = YoutubeDLCookieJar(str(copy))
+    jar.load()
+    assert {c.name: c.value for c in jar} == {"LOGIN_INFO": "v1", "SAPISID": "v2"}
+    assert "  " in src.read_text()  # оригинал не трогаем
