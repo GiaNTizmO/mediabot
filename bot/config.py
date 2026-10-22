@@ -13,6 +13,7 @@ class Config:
     cookies_file: str | None = None
     max_concurrent: int = 3
     data_dir: str = "data"
+    temp_dir: str | None = None
 
     @property
     def max_bytes(self) -> int:
@@ -38,4 +39,5 @@ def load_config() -> Config:
         cookies_file=os.getenv("COOKIES_FILE") or None,
         max_concurrent=int(os.getenv("MAX_CONCURRENT", "3")),
         data_dir=os.getenv("DATA_DIR", "data"),
+        temp_dir=os.getenv("TEMP_DIR") or None,
     )

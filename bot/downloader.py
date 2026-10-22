@@ -1,5 +1,7 @@
 import asyncio
+import logging
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -16,7 +18,11 @@ URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+log = logging.getLogger(__name__)
+
 MAX_HEIGHT = 1080
+# во время слияния видео+аудио на диске одновременно лежат исходники и результат
+DISK_HEADROOM = 2.2
 MEDIA_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".opus", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -91,6 +97,37 @@ class DownloadResult:
 
     def cleanup(self) -> None:
         self.tmp.cleanup()
+
+
+def temp_root(base: str | None = None) -> Path:
+    """Папка, в которой бот держит временные файлы. Вся она принадлежит боту."""
+    root = Path(base or tempfile.gettempdir()) / "mediabot"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def sweep_temp(base: str | None = None) -> int:
+    """Удаляет остатки прошлых запусков (после падения или перезапуска). Возвращает число удалённых папок."""
+    root = temp_root(base)
+    removed = 0
+    for p in root.iterdir():
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            p.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
+def check_free_space(base: str | None, need: int | None) -> None:
+    if not need:
+        return
+    free = shutil.disk_usage(temp_root(base)).free
+    if free < need * DISK_HEADROOM:
+        raise DownloadError(
+            f"На сервере мало места: свободно {human_size(free)}, а нужно ~{human_size(need * DISK_HEADROOM)}. "
+            "Выберите качество ниже или попробуйте позже."
+        )
 
 
 def find_url(text: str | None) -> str | None:
@@ -230,10 +267,13 @@ async def download(
     max_bytes: int,
     cookies: str | None = None,
     progress: Progress | None = None,
+    temp_dir: str | None = None,
 ) -> DownloadResult:
-    """Скачивает файл во временную папку. Вызывающий обязан вызвать result.cleanup()."""
+    """Скачивает файл во временную папку. Вызывающий обязан вызвать result.cleanup()
+    сразу после отправки: на диске файл живёт только между загрузкой и отправкой."""
     progress = progress or Progress()
-    tmp = tempfile.TemporaryDirectory(prefix="mediabot_")
+    check_free_space(temp_dir, option.size)
+    tmp = tempfile.TemporaryDirectory(prefix="job_", dir=temp_root(temp_dir))
     opts = _base_opts(cookies) | {
         "format": option.selector,
         "outtmpl": f"{tmp.name}/%(id).50s.%(ext)s",
@@ -265,7 +305,9 @@ async def download(
     except yt_dlp.utils.DownloadError as e:
         tmp.cleanup()
         raise DownloadError(_clean(e)) from e
-    except Exception:
+    except BaseException:
+        # в т.ч. CancelledError при остановке бота: просим поток yt-dlp прерваться и чистим папку
+        progress.cancel.set()
         tmp.cleanup()
         raise
 

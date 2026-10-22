@@ -287,12 +287,18 @@ async def on_choice(cb: CallbackQuery, cfg: Config, store: BotState, cache: File
             await edit(msg, render_progress(progress, title, started), stop_kb(token))
             ticker = asyncio.create_task(_progress_loop(msg, progress, title, started, token))
             try:
-                result = await download(info.url, option, cfg.max_bytes, cfg.cookies_file, progress)
+                result = await download(
+                    info.url, option, cfg.max_bytes, cfg.cookies_file, progress, cfg.temp_dir
+                )
             finally:
                 ticker.cancel()
 
         await edit(msg, f"📤 Отправляю в Telegram: {title}")
-        sent_kind, file_id = await _upload(bot, item.chat_id, result, option, info, reply)
+        try:
+            sent_kind, file_id = await _upload(bot, item.chat_id, result, option, info, reply)
+        finally:
+            # файл больше не нужен — удаляем сразу, не дожидаясь остальных действий
+            result.cleanup()
         cache.put(key, file_id, sent_kind)
         store.pending.pop(token, None)
         with contextlib.suppress(TelegramBadRequest):

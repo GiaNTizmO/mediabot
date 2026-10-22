@@ -10,6 +10,7 @@ from aiogram.types import BotCommand, LinkPreviewOptions
 
 from .cache import FileCache
 from .config import Config, load_config
+from .downloader import sweep_temp
 from .handlers import BotState, router
 
 
@@ -28,6 +29,8 @@ async def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)
     cfg = load_config()
+    if removed := sweep_temp(cfg.temp_dir):
+        logging.info("removed %d leftover temp item(s) from previous run", removed)
     cache = FileCache(Path(cfg.data_dir) / "cache.sqlite3")
     bot = build_bot(cfg)
 
@@ -41,6 +44,7 @@ async def run() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         cache.close()
+        sweep_temp(cfg.temp_dir)
 
 
 def main() -> None:
