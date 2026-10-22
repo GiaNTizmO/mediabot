@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -274,11 +275,42 @@ def _base_opts(cookies: str | None) -> dict:
     return opts
 
 
-def _clean(e: Exception) -> str:
+def _copy_cookies(cookies: str | None, directory: Path) -> Path | None:
+    """Личная копия cookies.txt на одну операцию.
+
+    yt-dlp при закрытии перезаписывает cookie-файл: оригинал, смонтированный только для чтения,
+    вызвал бы ошибку, а параллельные загрузки портили бы его. Копию удаляет вызывающий."""
+    if not cookies:
+        return None
+    src = Path(cookies)
+    if not src.is_file():
+        raise DownloadError(f"Файл cookies не найден: {cookies}. Проверьте COOKIES_FILE.")
+    fd, tmp = tempfile.mkstemp(prefix="cookies_", suffix=".txt", dir=directory)
+    os.close(fd)
+    shutil.copyfile(src, tmp)
+    return Path(tmp)
+
+
+def _site(msg: str) -> str:
+    m = re.match(r"\[(\w+)", msg)
+    return {"youtube": "YouTube", "instagram": "Instagram", "tiktok": "TikTok"}.get(
+        m.group(1).lower() if m else "", "Сайт"
+    )
+
+
+def _clean(e: Exception, has_cookies: bool = False) -> str:
     msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).replace("ERROR: ", "")
+    log.warning("yt-dlp error: %s", msg)
     low = msg.lower()
-    if "login" in low or "cookies" in low or "sign in" in low:
-        return "Сайт требует авторизацию (приватное видео или нужен cookies.txt)."
+    site = _site(msg)
+    if "not a bot" in low or ("sign in" in low and site == "YouTube"):
+        hint = ("cookies, похоже, устарели — экспортируйте заново." if has_cookies
+                else "Нужен cookies.txt (см. README, раздел «Авторизация»).")
+        return f"YouTube требует подтвердить, что вы не бот (так бывает на серверных IP). {hint}"
+    if any(w in low for w in ("login", "log in", "cookies", "sign in", "rate-limit", "rate limit")):
+        hint = ("cookies, похоже, устарели или аккаунт не имеет доступа — экспортируйте заново." if has_cookies
+                else "Нужен cookies.txt (см. README, раздел «Авторизация»).")
+        return f"{site} требует вход в аккаунт. {hint}"
     if "private" in low:
         return "Видео приватное."
     if "unsupported url" in low:
@@ -364,15 +396,22 @@ def _pick_thumbnail(info: dict) -> str | None:
     return (jpgs[-1] if jpgs else None) or info.get("thumbnail")
 
 
-async def fetch_info(url: str, cookies: str | None = None, max_bytes: int | None = None) -> VideoInfo:
+async def fetch_info(
+    url: str, cookies: str | None = None, max_bytes: int | None = None, temp_dir: str | None = None
+) -> VideoInfo:
     def run():
-        with yt_dlp.YoutubeDL(_base_opts(cookies)) as ydl:
-            return ydl.extract_info(url, download=False)
+        ck = _copy_cookies(cookies, temp_root(temp_dir))
+        try:
+            with yt_dlp.YoutubeDL(_base_opts(str(ck) if ck else None)) as ydl:
+                return ydl.extract_info(url, download=False)
+        finally:
+            if ck:
+                ck.unlink(missing_ok=True)
 
     try:
         info = await asyncio.to_thread(run)
     except yt_dlp.utils.DownloadError as e:
-        raise DownloadError(_clean(e)) from e
+        raise DownloadError(_clean(e, bool(cookies))) from e
     if info.get("_type") == "playlist":
         entries = [e for e in info.get("entries") or [] if e]
         if not entries:
@@ -417,7 +456,12 @@ async def download(
     progress = progress or Progress()
     check_free_space(temp_dir, option.size)
     tmp = tempfile.TemporaryDirectory(prefix="job_", dir=temp_root(temp_dir))
-    opts = _base_opts(cookies) | {
+    try:
+        ck = _copy_cookies(cookies, Path(tmp.name))  # удалится вместе с папкой задачи
+    except BaseException:
+        tmp.cleanup()
+        raise
+    opts = _base_opts(str(ck) if ck else None) | {
         "format": with_language(option.selector, lang) if lang else option.selector,
         "outtmpl": f"{tmp.name}/%(id).50s.%(ext)s",
         "max_filesize": max_bytes,
@@ -450,7 +494,7 @@ async def download(
         raise Cancelled("Загрузка отменена.") from e
     except yt_dlp.utils.DownloadError as e:
         tmp.cleanup()
-        raise DownloadError(_clean(e)) from e
+        raise DownloadError(_clean(e, bool(cookies))) from e
     except BaseException:
         # в т.ч. CancelledError при остановке бота: просим поток yt-dlp прерваться и чистим папку
         progress.cancel.set()

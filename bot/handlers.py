@@ -198,7 +198,7 @@ async def on_link(message: Message, cfg: Config, store: BotState):
     status = await message.reply("🔍 Получаю информацию…")
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            info = await fetch_info(url, cfg.cookies_file, cfg.max_bytes)
+            info = await fetch_info(url, cfg.cookies_file, cfg.max_bytes, cfg.temp_dir)
     except DownloadError as e:
         await status.edit_text(f"❌ Не удалось получить видео:\n{html.escape(str(e))}", parse_mode="HTML")
         return

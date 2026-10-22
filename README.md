@@ -57,6 +57,42 @@ python -m bot
 - Instagram часто требует авторизацию: экспортируйте cookies.txt расширением «Get cookies.txt LOCALLY».
 - Сайты меняются, и yt-dlp периодически ломается. Обновление: `pip install -U "yt-dlp[default]"` или `docker compose build --pull`.
 
+## Авторизация (cookies.txt)
+Нужна, если бот отвечает «требует вход» или «подтвердить, что вы не бот»:
+- **YouTube** часто требует подтверждения «я не бот» с серверных (датацентровых) IP;
+- **Instagram** без входа отдаёт мало контента и быстро упирается в лимиты.
+
+Используйте **второстепенный аккаунт**: сайты могут ограничить аккаунт, который качает через yt-dlp.
+Cookies дают полный доступ к аккаунту, поэтому никому их не передавайте и не коммитьте (`cookies.txt` уже в `.gitignore`).
+
+### 1. Экспорт cookies
+Установите расширение **Get cookies.txt LOCALLY** (Chrome) или **cookies.txt** (Firefox).
+
+**YouTube** (по рекомендации yt-dlp, иначе cookies быстро «протухают»):
+1. Откройте окно **инкогнито** и войдите в YouTube.
+2. В той же вкладке перейдите на `https://www.youtube.com/robots.txt`.
+3. Экспортируйте cookies для `youtube.com` и **закройте окно инкогнито, не выходя из аккаунта**.
+
+**Instagram**: войдите на instagram.com, экспортируйте cookies для `instagram.com`.
+
+Нужны оба сайта? Склейте файлы в один `cookies.txt`, оставив строку-заголовок `# Netscape HTTP Cookie File` один раз.
+Не экспортируйте «все cookies браузера»: туда попадут сессии почты, банков и т.д.
+
+### 2. Подключение к боту
+**Docker:** положите `cookies.txt` рядом с `docker-compose.yml`, раскомментируйте строку
+`- ./cookies.txt:/app/cookies.txt:ro`, в `.env` укажите `COOKIES_FILE=/app/cookies.txt` и выполните `docker compose up -d`.
+
+**Без Docker:** в `.env` укажите `COOKIES_FILE=/полный/путь/cookies.txt` и перезапустите бота.
+
+Бот работает с копией файла: оригинал не изменяется, и его можно смонтировать только для чтения.
+
+### 3. Если не помогло
+- «cookies, похоже, устарели» → экспортируйте заново (шаги выше).
+- YouTube продолжает требовать «я не бот» даже со свежими cookies → IP сервера помечен YouTube. Помогает
+  плагин [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) (PO-токены)
+  или прокси с «домашним» IP.
+- Подробная причина ошибки пишется в лог: `docker compose logs bot`.
+
 ## Тесты
 ```bash
 pip install -r requirements-dev.txt
