@@ -1,0 +1,31 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # общая папка для временных файлов: нужна, если включён локальный Bot API
+      TMPDIR: /work
+    volumes:
+      - ./data:/app/data
+      - work:/work
+      # - ./cookies.txt:/app/cookies.txt:ro   # и COOKIES_FILE=/app/cookies.txt в .env
+
+  # Необязательно: локальный Bot API сервер — снимает лимит 50 МБ (до 2 ГБ).
+  # Запуск: docker compose --profile local-api up -d
+  # В .env: LOCAL_API_URL=http://telegram-bot-api:8081, MAX_FILE_MB=2000,
+  #         TELEGRAM_API_ID / TELEGRAM_API_HASH с https://my.telegram.org
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    profiles: [local-api]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - work:/work
+      - tg-api-data:/var/lib/telegram-bot-api
+
+volumes:
+  work:
+  tg-api-data:

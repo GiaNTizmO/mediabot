@@ -1,20 +1,58 @@
 # mediabot
 
-Telegram-бот: присылаете ссылку (YouTube, Shorts, TikTok, Instagram) → бот предлагает качество/аудио → присылает файл.
-Работает на aiogram 3 + yt-dlp + ffmpeg.
+Telegram-бот для скачивания видео с **YouTube, YouTube Shorts, TikTok и Instagram**.
+Вы присылаете ссылку, бот показывает превью и варианты (качество видео или MP3), а потом присылает выбранный файл.
 
-## Запуск
+Стек: aiogram 3, yt-dlp, ffmpeg.
+
+## Возможности
+- Превью с обложкой, названием, автором и длительностью
+- Варианты качества (до 1080p) с примерным размером; ⚠️ помечает файлы больше лимита
+- MP3 с обложкой и тегами
+- Прогресс загрузки (процент, скорость, ETA) и кнопка **«Отмена»**
+- Правильные пропорции и превью для вертикальных видео (Shorts/TikTok/Reels)
+- Предпочтение H.264/AAC, чтобы видео проигрывалось во всех клиентах Telegram
+- **Кэш file_id** (SQLite): повторный запрос того же видео отправляется мгновенно
+- Очередь: ограничение одновременных загрузок, одна загрузка на пользователя
+- Работа в группах: бот реагирует только на ссылки, а кнопки нажимает только автор запроса
+- Понятные сообщения об ошибках (приватное видео, нужна авторизация, недоступно…)
+- Опционально: локальный Bot API для файлов до 2 ГБ, белый список пользователей, cookies
+
+## Запуск через Docker (рекомендуется)
 ```bash
-sudo apt install ffmpeg          # обязателен
+cp .env.example .env      # впишите BOT_TOKEN от @BotFather
+docker compose up -d --build
+```
+Файлы до 2 ГБ: заполните `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`, `LOCAL_API_URL=http://telegram-bot-api:8081`,
+`MAX_FILE_MB=2000` и запустите `docker compose --profile local-api up -d --build`.
+
+## Запуск без Docker
+Нужны Python 3.10+, `ffmpeg` и [deno](https://deno.com) (для YouTube требуется yt-dlp).
+```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env             # впишите BOT_TOKEN от @BotFather
+cp .env.example .env
 python -m bot
 ```
 
-## Заметки
-- Лимит Bot API на отправку — 50 МБ. Для файлов до 2 ГБ поднимите [локальный Bot API сервер](https://github.com/tdlib/telegram-bot-api) и задайте `LOCAL_API_URL` и `MAX_FILE_MB`.
-- Бот сам скрывает/отклоняет варианты, не влезающие в лимит.
-- Instagram и иногда YouTube требуют авторизации: экспортируйте cookies.txt (расширение «Get cookies.txt LOCALLY») и укажите `COOKIES_FILE`.
-- `ALLOWED_USERS` ограничивает доступ списком user id.
-- yt-dlp часто ломается из‑за изменений сайтов: `pip install -U yt-dlp`.
+## Настройки (.env)
+| Переменная | Описание |
+|---|---|
+| `BOT_TOKEN` | токен бота (обязательно) |
+| `MAX_FILE_MB` | лимит размера файла, по умолчанию 50 |
+| `LOCAL_API_URL` | адрес локального telegram-bot-api |
+| `ALLOWED_USERS` | user id через запятую; пусто означает доступ для всех |
+| `COOKIES_FILE` | cookies.txt для Instagram/YouTube с ограничениями |
+| `MAX_CONCURRENT` | одновременных загрузок (по умолчанию 3) |
+| `DATA_DIR` | папка для кэша |
+
+## Советы
+- Instagram часто требует авторизацию: экспортируйте cookies.txt расширением «Get cookies.txt LOCALLY».
+- Сайты меняются, и yt-dlp периодически ломается. Обновление: `pip install -U "yt-dlp[default]"` или `docker compose build --pull`.
+
+## Тесты
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+Тесты не требуют сети: используется локальный HTTP-сервер с тестовым видео.
