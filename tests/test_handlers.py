@@ -73,3 +73,46 @@ async def test_file_removed_when_upload_fails(media_server, tmp_path):
     await on_choice(cb, cfg, store, FileCache(tmp_path / "c.db"), bot)
     assert list(temp_root(cfg.temp_dir).iterdir()) == []
     assert "Не удалось" in cb.message.edit_text.await_args.args[0]
+
+
+async def test_track_picker_flow(media_server, tmp_path, monkeypatch):
+    from bot import handlers
+    from bot.downloader import AudioTrack, DownloadError
+
+    cfg = Config(token="x", temp_dir=str(tmp_path / "t"))
+    store = BotState(1)
+    info = await fetch_info(media_server)
+    info.audio_tracks = [AudioTrack("en", "🇬🇧 Английский", True), AudioTrack("ru", "🇷🇺 Русский")]
+    token = store.add(Pending(info, 1, 10, 5))
+    key = info.options[0].key
+    bot = make_bot()
+    calls = []
+
+    async def fake_download(*args, **kwargs):
+        calls.append(kwargs)
+        raise DownloadError("boom")
+
+    monkeypatch.setattr(handlers, "download", fake_download)
+
+    # 1. выбор качества → показываем дорожки, ничего не качаем
+    cb = make_cb(token, key)
+    await on_choice(cb, cfg, store, FileCache(tmp_path / "c.db"), bot)
+    assert calls == []
+    text, kb = cb.message.edit_text.await_args.args[0], cb.message.edit_text.await_args.kwargs["reply_markup"]
+    assert "звуковую дорожку" in text
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert [b.text for b in buttons] == ["🇬🇧 Английский · оригинал", "🇷🇺 Русский", "⬅️ Назад"]
+    assert buttons[1].callback_data == f"dl:{token}:{key}:1"
+
+    # 2. выбор дорожки → загрузка с языком ru
+    cb = make_cb(token, f"{key}:1")
+    await on_choice(cb, cfg, store, FileCache(tmp_path / "c.db"), bot)
+    assert calls[0]["lang"] == "ru"
+
+    # 3. кэш хранится отдельно для каждой дорожки
+    assert info.cache_key(info.options[0], "ru") != info.cache_key(info.options[0], "en")
+
+    # 4. неверный индекс дорожки
+    cb = make_cb(token, f"{key}:9")
+    await on_choice(cb, cfg, store, FileCache(tmp_path / "c.db"), bot)
+    assert cb.answer.await_args.kwargs.get("show_alert")

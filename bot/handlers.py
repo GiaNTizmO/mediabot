@@ -116,6 +116,8 @@ def options_text(info: VideoInfo, note: str | None = None) -> str:
     )
     if meta:
         parts.insert(1, meta)
+    if info.audio_tracks:
+        parts.append(f"🔊 Звуковых дорожек: {len(info.audio_tracks)} — выбор после качества")
     if note:
         parts.append(f"\n{note}")
     parts.append("\nВыберите вариант:")
@@ -128,17 +130,36 @@ def options_kb(token: str, info: VideoInfo) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def tracks_kb(token: str, option: Option, info: VideoInfo) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(text=t.label, callback_data=f"dl:{token}:{option.key}:{i}")
+        for i, t in enumerate(info.audio_tracks)
+    ]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back:{token}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tracks_text(info: VideoInfo, option: Option) -> str:
+    return (
+        f"<b>{html.escape(short(info.title, 200))}</b>\n"
+        f"Выбрано: {html.escape(option.label)}\n\n🔊 Выберите звуковую дорожку:"
+    )
+
+
 def stop_kb(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="⛔ Отмена", callback_data=f"stop:{token}")]]
     )
 
 
-def caption(info: VideoInfo) -> str:
+def caption(info: VideoInfo, lang: str | None = None) -> str:
     title = html.escape(short(info.title, 700))
     text = f'<a href="{html.escape(info.url, quote=True)}">{title}</a>'
     if info.uploader:
         text += f"\n👤 {html.escape(info.uploader)}"
+    if track := info.find_track(lang):
+        text += f"\n🔊 {html.escape(track.name)}"
     return text
 
 
@@ -218,6 +239,17 @@ async def on_close(cb: CallbackQuery, store: BotState):
         await cb.message.delete()
 
 
+@router.callback_query(F.data.startswith("back:"))
+async def on_back(cb: CallbackQuery, store: BotState):
+    token, _, item = _parse(cb, store)
+    if not item:
+        return await cb.answer("Запрос устарел, пришлите ссылку заново.", show_alert=True)
+    if item.user_id != cb.from_user.id:
+        return await cb.answer("Это не ваш запрос.", show_alert=True)
+    await cb.answer()
+    await edit(cb.message, options_text(item.info), options_kb(token, item.info))
+
+
 @router.callback_query(F.data.startswith("stop:"))
 async def on_stop(cb: CallbackQuery, store: BotState):
     token, _, item = _parse(cb, store)
@@ -244,6 +276,23 @@ async def on_choice(cb: CallbackQuery, cfg: Config, store: BotState, cache: File
     if not option:
         return await cb.answer("Неизвестный вариант", show_alert=True)
 
+    # несколько озвучек: сначала спрашиваем дорожку, потом качаем
+    lang = None
+    if info.audio_tracks:
+        if len(rest) < 2:
+            if option.size and option.size > cfg.max_bytes:
+                return await cb.answer(
+                    f"Примерно {human_size(option.size)} — больше лимита {human_size(cfg.max_bytes)}. "
+                    "Выберите качество ниже.",
+                    show_alert=True,
+                )
+            await cb.answer()
+            return await edit(cb.message, tracks_text(info, option), tracks_kb(token, option, info))
+        try:
+            lang = info.audio_tracks[int(rest[1])].lang
+        except (ValueError, IndexError):
+            return await cb.answer("Неизвестная дорожка", show_alert=True)
+
     reply = ReplyParameters(message_id=item.source_message_id, allow_sending_without_reply=True)
     answered = False
 
@@ -255,11 +304,11 @@ async def on_choice(cb: CallbackQuery, cfg: Config, store: BotState, cache: File
                 await cb.answer(text, show_alert=alert)
 
     # 1. мгновенная отправка из кэша
-    key = info.cache_key(option)
+    key = info.cache_key(option, lang)
     if cached := cache.get(key):
         await answer("Из кэша ⚡")
         try:
-            await _send_cached(bot, item.chat_id, cached, info, reply)
+            await _send_cached(bot, item.chat_id, cached, info, reply, lang)
             with contextlib.suppress(TelegramBadRequest):
                 await cb.message.delete()
             store.pending.pop(token, None)
@@ -298,13 +347,14 @@ async def on_choice(cb: CallbackQuery, cfg: Config, store: BotState, cache: File
                     info.url, option, cfg.max_bytes, cfg.cookies_file, progress, cfg.temp_dir,
                     filename=info.file_stem(option),
                     tags=info.audio_tags() if option.audio_only else None,
+                    lang=lang,
                 )
             finally:
                 ticker.cancel()
 
         await edit(msg, f"📤 Отправляю в Telegram: {title}")
         try:
-            sent_kind, file_id = await _upload(bot, item.chat_id, result, option, info, reply)
+            sent_kind, file_id = await _upload(bot, item.chat_id, result, option, info, reply, lang)
         finally:
             # файл больше не нужен — удаляем сразу, не дожидаясь остальных действий
             result.cleanup()
@@ -336,9 +386,11 @@ async def _progress_loop(msg: Message, progress: Progress, title: str, started: 
             last = text
 
 
-async def _send_cached(bot: Bot, chat_id: int, cached: tuple[str, str], info: VideoInfo, reply):
+async def _send_cached(
+    bot: Bot, chat_id: int, cached: tuple[str, str], info: VideoInfo, reply, lang: str | None = None
+):
     file_id, kind = cached
-    common = dict(chat_id=chat_id, caption=caption(info), parse_mode="HTML", reply_parameters=reply)
+    common = dict(chat_id=chat_id, caption=caption(info, lang), parse_mode="HTML", reply_parameters=reply)
     if kind == "video":
         await bot.send_video(video=file_id, supports_streaming=True, **common)
     elif kind == "audio":
@@ -348,13 +400,14 @@ async def _send_cached(bot: Bot, chat_id: int, cached: tuple[str, str], info: Vi
 
 
 async def _upload(
-    bot: Bot, chat_id: int, result: DownloadResult, option: Option, info: VideoInfo, reply
+    bot: Bot, chat_id: int, result: DownloadResult, option: Option, info: VideoInfo, reply,
+    lang: str | None = None,
 ) -> tuple[str, str]:
     path = result.path
     thumb_path = Path(result.tmp.name) / "thumb_tg.jpg"
     common = dict(
         chat_id=chat_id,
-        caption=caption(info),
+        caption=caption(info, lang),
         parse_mode="HTML",
         reply_parameters=reply,
         request_timeout=UPLOAD_TIMEOUT,

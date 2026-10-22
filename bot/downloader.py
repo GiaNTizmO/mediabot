@@ -51,6 +51,17 @@ class Option:
 
 
 @dataclass
+class AudioTrack:
+    lang: str  # код языка как у yt-dlp: "ru", "en-US", "en-desc"
+    name: str
+    original: bool = False
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} · оригинал" if self.original else self.name
+
+
+@dataclass
 class VideoInfo:
     url: str
     id: str
@@ -65,9 +76,14 @@ class VideoInfo:
     album: str | None = None
     year: str | None = None
     is_music: bool = False
+    audio_tracks: list[AudioTrack] = field(default_factory=list)  # пусто, если дорожка одна
 
-    def cache_key(self, option: Option) -> str:
-        return f"{self.extractor}:{self.id}:{option.key}"
+    def cache_key(self, option: Option, lang: str | None = None) -> str:
+        key = f"{self.extractor}:{self.id}:{option.key}"
+        return f"{key}:{lang}" if lang else key
+
+    def find_track(self, lang: str | None) -> AudioTrack | None:
+        return next((t for t in self.audio_tracks if t.lang == lang), None)
 
     @property
     def audio_title(self) -> str:
@@ -171,6 +187,65 @@ def safe_filename(name: str, fallback: str = "video", max_bytes: int = 180) -> s
     if len(encoded) > max_bytes:  # лимит ФС — 255 байт, кириллица занимает по 2
         name = encoded[:max_bytes].decode(errors="ignore").rstrip(" .") + "…"
     return name or fallback
+
+
+LANG_NAMES = {
+    "ru": ("🇷🇺", "Русский"), "en": ("🇬🇧", "Английский"), "uk": ("🇺🇦", "Украинский"),
+    "be": ("🇧🇾", "Белорусский"), "kk": ("🇰🇿", "Казахский"), "uz": ("🇺🇿", "Узбекский"),
+    "es": ("🇪🇸", "Испанский"), "pt": ("🇵🇹", "Португальский"), "de": ("🇩🇪", "Немецкий"),
+    "fr": ("🇫🇷", "Французский"), "it": ("🇮🇹", "Итальянский"), "pl": ("🇵🇱", "Польский"),
+    "nl": ("🇳🇱", "Нидерландский"), "tr": ("🇹🇷", "Турецкий"), "ar": ("🇸🇦", "Арабский"),
+    "he": ("🇮🇱", "Иврит"), "hi": ("🇮🇳", "Хинди"), "bn": ("🇧🇩", "Бенгальский"),
+    "ta": ("🇮🇳", "Тамильский"), "te": ("🇮🇳", "Телугу"), "ml": ("🇮🇳", "Малаялам"),
+    "ja": ("🇯🇵", "Японский"), "ko": ("🇰🇷", "Корейский"), "zh": ("🇨🇳", "Китайский"),
+    "id": ("🇮🇩", "Индонезийский"), "vi": ("🇻🇳", "Вьетнамский"), "th": ("🇹🇭", "Тайский"),
+    "fil": ("🇵🇭", "Филиппинский"),
+}
+
+
+def _flag(region: str) -> str:
+    return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in region.upper())
+
+
+def language_name(code: str) -> str:
+    base, *parts = code.split("-")
+    flag, name = LANG_NAMES.get(base.lower(), ("🔊", base))
+    for part in parts:
+        if part.lower() == "desc":
+            name += " (тифлокомментарий)"
+        elif part == "419":
+            name += " (Лат. Америка)"
+        elif len(part) == 2 and part.isalpha():
+            flag = _flag(part)
+    return f"{flag} {name}"
+
+
+def audio_tracks(formats: list[dict]) -> list[AudioTrack]:
+    """Звуковые дорожки (озвучки) ролика. Пустой список, если дорожка одна."""
+    prefs: dict[str, int] = {}
+    for f in formats:
+        lang = f.get("language")
+        if lang and f.get("acodec") not in (None, "none"):
+            prefs[lang] = max(prefs.get(lang, -100), f.get("language_preference") or -1)
+    if len(prefs) < 2:
+        return []
+    tracks = [AudioTrack(lang, language_name(lang), pref >= 10) for lang, pref in prefs.items()]
+    names = [t.name for t in tracks]
+    for t in tracks:  # en-US и en-GB без флага-различия — добавляем код
+        if names.count(t.name) > 1:
+            t.name += f" ({t.lang})"
+    def order(t: AudioTrack):
+        # оригинал, затем русская озвучка, затем остальные по алфавиту, тифлокомментарии в конце
+        return (not t.original, "desc" in t.lang, t.lang.split("-")[0] != "ru", t.name.split(" ", 1)[-1])
+
+    return sorted(tracks, key=order)
+
+
+def with_language(selector: str, lang: str) -> str:
+    """Ограничивает звук в селекторе формата выбранной дорожкой: ba → ba[language=ru], b → b[language=ru].
+    bv* → bv: видео берём строго без звука, иначе yt-dlp может взять ролик со звуком другой дорожки."""
+    selector = selector.replace("bv*", "bv")
+    return re.sub(r"(?<![\w*])(ba|b)(?=[\[/+]|$)", rf"\1[language={lang}]", selector)
 
 
 def is_music_url(url: str) -> bool:
@@ -322,6 +397,7 @@ async def fetch_info(url: str, cookies: str | None = None, max_bytes: int | None
         album=info.get("album"),
         year=str(year) if year else None,
         is_music=music,
+        audio_tracks=audio_tracks(info.get("formats") or []),
     )
 
 
@@ -334,6 +410,7 @@ async def download(
     temp_dir: str | None = None,
     filename: str | None = None,
     tags: AudioTags | None = None,
+    lang: str | None = None,
 ) -> DownloadResult:
     """Скачивает файл во временную папку. Вызывающий обязан вызвать result.cleanup()
     сразу после отправки: на диске файл живёт только между загрузкой и отправкой."""
@@ -341,7 +418,7 @@ async def download(
     check_free_space(temp_dir, option.size)
     tmp = tempfile.TemporaryDirectory(prefix="job_", dir=temp_root(temp_dir))
     opts = _base_opts(cookies) | {
-        "format": option.selector,
+        "format": with_language(option.selector, lang) if lang else option.selector,
         "outtmpl": f"{tmp.name}/%(id).50s.%(ext)s",
         "max_filesize": max_bytes,
         "progress_hooks": [progress.hook],
