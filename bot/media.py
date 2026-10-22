@@ -47,3 +47,37 @@ async def make_thumbnail(src: Path, dst: Path, seek: float = 1.0) -> Path | None
         if await _run(*args) is not None and dst.exists() and dst.stat().st_size:
             return dst
     return None
+
+
+@dataclass
+class AudioTags:
+    title: str
+    artist: str | None = None
+    album: str | None = None
+    year: str | None = None
+
+
+async def make_cover(src: Path, dst: Path, size: int = 800) -> Path | None:
+    """Квадратная обложка из превью: обрезаем по центру (16:9 → 1:1), как делает YouTube Music."""
+    vf = f"crop='min(iw,ih)':'min(iw,ih)',scale='min({size},iw)':'min({size},ih)'"
+    ok = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-frames:v", "1", "-vf", vf, "-q:v", "2", str(dst))
+    return dst if ok is not None and dst.exists() and dst.stat().st_size else None
+
+
+async def tag_audio(src: Path, dst: Path, tags: AudioTags, cover: Path | None) -> bool:
+    """Вшивает в mp3/m4a теги и обложку без перекодирования звука."""
+    args = ["ffmpeg", "-y", "-v", "error", "-i", str(src)]
+    if cover:
+        args += ["-i", str(cover), "-map", "0:a", "-map", "1:v", "-disposition:v:0", "attached_pic"]
+    else:
+        args += ["-map", "0:a"]
+    args += ["-c", "copy", "-map_metadata", "-1"]
+    for k, v in (("title", tags.title), ("artist", tags.artist), ("album", tags.album), ("date", tags.year)):
+        if v:
+            args += ["-metadata", f"{k}={v}"]
+    if dst.suffix.lower() == ".mp3":
+        args += ["-id3v2_version", "3"]
+        if cover:
+            args += ["-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
+    args.append(str(dst))
+    return await _run(*args) is not None and dst.exists() and dst.stat().st_size > 0

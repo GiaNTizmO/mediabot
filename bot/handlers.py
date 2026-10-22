@@ -100,15 +100,22 @@ def short(text: str, n: int) -> str:
 
 
 def options_text(info: VideoInfo, note: str | None = None) -> str:
-    parts = [f"<b>{html.escape(short(info.title, 200))}</b>"]
+    if info.track:
+        parts = [f"🎵 <b>{html.escape(short(info.track, 200))}</b>"]
+        author = info.audio_artist
+        if info.album:
+            parts.append(f"💿 {html.escape(short(info.album, 100))}" + (f" ({info.year})" if info.year else ""))
+    else:
+        parts = [f"<b>{html.escape(short(info.title, 200))}</b>"]
+        author = info.uploader
     meta = " · ".join(
         x for x in (
-            html.escape(info.uploader) if info.uploader else "",
+            html.escape(author) if author else "",
             f"⏱ {fmt_duration(info.duration)}" if info.duration else "",
         ) if x
     )
     if meta:
-        parts.append(meta)
+        parts.insert(1, meta)
     if note:
         parts.append(f"\n{note}")
     parts.append("\nВыберите вариант:")
@@ -288,7 +295,9 @@ async def on_choice(cb: CallbackQuery, cfg: Config, store: BotState, cache: File
             ticker = asyncio.create_task(_progress_loop(msg, progress, title, started, token))
             try:
                 result = await download(
-                    info.url, option, cfg.max_bytes, cfg.cookies_file, progress, cfg.temp_dir
+                    info.url, option, cfg.max_bytes, cfg.cookies_file, progress, cfg.temp_dir,
+                    filename=info.file_stem(option),
+                    tags=info.audio_tags() if option.audio_only else None,
                 )
             finally:
                 ticker.cancel()
@@ -355,9 +364,9 @@ async def _upload(
         thumb = await make_thumbnail(result.thumbnail, thumb_path, seek=0) if result.thumbnail else None
         async with ChatActionSender.upload_voice(bot=bot, chat_id=chat_id):
             sent = await bot.send_audio(
-                audio=FSInputFile(path, filename=f"{short(info.title, 60)}.mp3"),
-                title=short(info.title, 64),
-                performer=info.uploader,
+                audio=FSInputFile(path),
+                title=short(info.audio_title, 64),
+                performer=info.audio_artist,
                 duration=info.duration,
                 thumbnail=FSInputFile(thumb) if thumb else None,
                 **common,
